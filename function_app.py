@@ -288,18 +288,12 @@ def get_tag_definitions(req: func.HttpRequest) -> func.HttpResponse:
         sql = f"""
             SELECT TOP ({limit})
               tag_id,
-              tag_code,
               tag_name,
               description,
-              value_type,
-              source_type,
-              is_multi_valued,
-              is_active,
-              created_at,
-              updated_at
+              created_at
             FROM tag_definitions
             {where_clause}
-            ORDER BY updated_at DESC, created_at DESC;
+            ORDER BY created_at DESC;
         """
         rows = query_all(sql)
         return func.HttpResponse(
@@ -367,11 +361,50 @@ def get_account_tags(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("getAccountTags called")
 
     try:
-        payload = _fetch_table_rows(
-            "account_tags",
-            req,
-            filterable={"account_id": "account_id", "tag_id": "tag_id"},
-        )
+        limit = _clamp_limit(req.params.get("limit", 200))
+        account_id = req.params.get("account_id")
+        tag_id = req.params.get("tag_id")
+
+        where_parts = []
+        params = []
+        if account_id:
+            where_parts.append("at.account_id = ?")
+            params.append(account_id)
+        if tag_id:
+            where_parts.append("at.tag_id = ?")
+            params.append(tag_id)
+
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        sql = f"""
+            SELECT TOP ({limit})
+              at.account_id,
+              at.tag_id,
+              at.tag_value,
+              at.confidence_score,
+              at.created_at,
+              COALESCE(a.company_name, a.account_name, a.name) AS account_name,
+              td.tag_name
+            FROM account_tags AS at
+            LEFT JOIN tag_definitions AS td ON at.tag_id = td.tag_id
+            LEFT JOIN accounts AS a ON at.account_id = a.account_id
+            {where_clause}
+            ORDER BY at.created_at DESC;
+        """
+
+        rows = query_all(sql, tuple(params))
+        payload = {
+            "columns": [
+                "account_name",
+                "tag_name",
+                "tag_value",
+                "confidence_score",
+                "created_at",
+                "account_id",
+                "tag_id",
+            ],
+            "rows": rows,
+        }
         return func.HttpResponse(
             body=json.dumps(payload, default=str),
             mimetype="application/json",
