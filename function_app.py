@@ -383,11 +383,11 @@ def get_account_tags(req: func.HttpRequest) -> func.HttpResponse:
               at.tag_value,
               at.confidence_score,
               at.created_at,
-              COALESCE(a.company_name, a.account_name, a.name) AS account_name,
+              a.企業名 AS account_name,
               td.tag_name
             FROM account_tags AS at
             LEFT JOIN tag_definitions AS td ON at.tag_id = td.tag_id
-            LEFT JOIN accounts AS a ON at.account_id = a.account_id
+            LEFT JOIN account AS a ON at.account_id = a.企業ID
             {where_clause}
             ORDER BY at.created_at DESC;
         """
