@@ -354,7 +354,7 @@ def get_score_definitions(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
         )
 
-# ===== GET /api/getAccountTags =====
+# ===== GET /api/getAccountTags ===== 
 
 @app.route(route="getAccountTags", methods=["GET"])
 def get_account_tags(req: func.HttpRequest) -> func.HttpResponse:
