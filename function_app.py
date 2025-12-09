@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 
 import azure.functions as func
-import pyodbc
+import pypyodbc as pyodbc
 import requests
 
 # ✅ アプリ全体のデフォルト認証レベルを anonymous に
