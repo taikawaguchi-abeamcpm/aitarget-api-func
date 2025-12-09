@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import azure.functions as func
 import pypyodbc as pyodbc
@@ -353,6 +354,286 @@ def get_score_definitions(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500,
         )
+
+# ===== POST /api/createTagDefinition =====
+
+def _parse_json_body(req: func.HttpRequest) -> dict | None:
+    try:
+        return req.get_json() or {}
+    except Exception:
+        return None
+
+
+def _json_response(payload: dict, status_code: int = 200) -> func.HttpResponse:
+    return func.HttpResponse(
+        body=json.dumps(payload, default=str),
+        mimetype="application/json",
+        status_code=status_code,
+    )
+
+
+@app.route(route="createTagDefinition", methods=["POST"])
+def create_tag_definition(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("createTagDefinition called")
+
+    payload = _parse_json_body(req)
+    if payload is None:
+        return _json_response({"message": "Invalid JSON"}, 400)
+
+    tag_name = (payload.get("tag_name") or "").strip()
+    if not tag_name:
+        return _json_response({"message": "tag_name is required."}, 400)
+
+    tag_code = (payload.get("tag_code") or tag_name).strip()
+    description = payload.get("description")
+    value_type = payload.get("value_type", "string")
+    source_type = payload.get("source_type", "manual")
+    is_multi_valued = 1 if payload.get("is_multi_valued") else 0
+
+    tag_id = payload.get("tag_id") or str(uuid4())
+    now = datetime.now(tz=timezone.utc)
+
+    try:
+        sql = """
+            INSERT INTO tag_definitions
+              (tag_id, tag_code, tag_name, description, value_type, source_type,
+               is_multi_valued, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """
+        params = (
+            tag_id,
+            tag_code,
+            tag_name,
+            description,
+            value_type,
+            source_type,
+            is_multi_valued,
+            1,
+            now,
+            now,
+        )
+        execute_non_query(sql, params)
+
+        return _json_response(
+            {
+                "tag_id": tag_id,
+                "tag_code": tag_code,
+                "tag_name": tag_name,
+                "description": description,
+                "is_active": 1,
+            },
+            201,
+        )
+    except Exception as e:
+        logging.exception("createTagDefinition error")
+        return _json_response({"message": str(e)}, 500)
+
+
+# ===== POST /api/updateTagDefinition =====
+
+@app.route(route="updateTagDefinition", methods=["POST"])
+def update_tag_definition(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("updateTagDefinition called")
+
+    payload = _parse_json_body(req)
+    if payload is None:
+        return _json_response({"message": "Invalid JSON"}, 400)
+
+    tag_id = payload.get("tag_id")
+    if not tag_id:
+        return _json_response({"message": "tag_id is required."}, 400)
+
+    tag_name = payload.get("tag_name")
+    description = payload.get("description")
+    if tag_name is None and description is None:
+        return _json_response({"message": "tag_name or description is required."}, 400)
+
+    now = datetime.now(tz=timezone.utc)
+
+    try:
+        sql = """
+            UPDATE tag_definitions
+               SET tag_name = COALESCE(?, tag_name),
+                   description = COALESCE(?, description),
+                   updated_at = ?
+             WHERE tag_id = ?;
+        """
+        updated = execute_non_query(sql, (tag_name, description, now, tag_id))
+        if updated == 0:
+            return _json_response({"message": "Tag not found."}, 404)
+
+        return _json_response({"tag_id": tag_id, "tag_name": tag_name, "description": description})
+    except Exception as e:
+        logging.exception("updateTagDefinition error")
+        return _json_response({"message": str(e)}, 500)
+
+
+# ===== POST /api/deleteTagDefinition =====
+
+@app.route(route="deleteTagDefinition", methods=["POST"])
+def delete_tag_definition(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("deleteTagDefinition called")
+
+    payload = _parse_json_body(req)
+    if payload is None:
+        return _json_response({"message": "Invalid JSON"}, 400)
+
+    tag_id = payload.get("tag_id")
+    if not tag_id:
+        return _json_response({"message": "tag_id is required."}, 400)
+
+    now = datetime.now(tz=timezone.utc)
+
+    try:
+        sql = """
+            UPDATE tag_definitions
+               SET is_active = 0,
+                   updated_at = ?
+             WHERE tag_id = ?;
+        """
+        updated = execute_non_query(sql, (now, tag_id))
+        if updated == 0:
+            return _json_response({"message": "Tag not found."}, 404)
+
+        return _json_response({"tag_id": tag_id, "status": "deleted"})
+    except Exception as e:
+        logging.exception("deleteTagDefinition error")
+        return _json_response({"message": str(e)}, 500)
+
+
+# ===== POST /api/createScoreDefinition =====
+
+@app.route(route="createScoreDefinition", methods=["POST"])
+def create_score_definition(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("createScoreDefinition called")
+
+    payload = _parse_json_body(req)
+    if payload is None:
+        return _json_response({"message": "Invalid JSON"}, 400)
+
+    score_name = (payload.get("score_name") or "").strip()
+    if not score_name:
+        return _json_response({"message": "score_name is required."}, 400)
+
+    score_code = (payload.get("score_code") or score_name).strip()
+    description = payload.get("description")
+    min_value = payload.get("min_value")
+    max_value = payload.get("max_value")
+    direction = payload.get("direction", "higher_is_better")
+    source_type = payload.get("source_type", "manual")
+    refresh_interval = payload.get("refresh_interval")
+
+    score_id = payload.get("score_id") or str(uuid4())
+    now = datetime.now(tz=timezone.utc)
+
+    try:
+        sql = """
+            INSERT INTO score_definitions
+              (score_id, score_code, score_name, description, min_value, max_value,
+               direction, source_type, refresh_interval, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """
+        params = (
+            score_id,
+            score_code,
+            score_name,
+            description,
+            min_value,
+            max_value,
+            direction,
+            source_type,
+            refresh_interval,
+            1,
+            now,
+            now,
+        )
+        execute_non_query(sql, params)
+
+        return _json_response(
+            {
+                "score_id": score_id,
+                "score_code": score_code,
+                "score_name": score_name,
+                "description": description,
+                "is_active": 1,
+            },
+            201,
+        )
+    except Exception as e:
+        logging.exception("createScoreDefinition error")
+        return _json_response({"message": str(e)}, 500)
+
+
+# ===== POST /api/updateScoreDefinition =====
+
+@app.route(route="updateScoreDefinition", methods=["POST"])
+def update_score_definition(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("updateScoreDefinition called")
+
+    payload = _parse_json_body(req)
+    if payload is None:
+        return _json_response({"message": "Invalid JSON"}, 400)
+
+    score_id = payload.get("score_id")
+    if not score_id:
+        return _json_response({"message": "score_id is required."}, 400)
+
+    score_name = payload.get("score_name")
+    description = payload.get("description")
+    if score_name is None and description is None:
+        return _json_response({"message": "score_name or description is required."}, 400)
+
+    now = datetime.now(tz=timezone.utc)
+
+    try:
+        sql = """
+            UPDATE score_definitions
+               SET score_name = COALESCE(?, score_name),
+                   description = COALESCE(?, description),
+                   updated_at = ?
+             WHERE score_id = ?;
+        """
+        updated = execute_non_query(sql, (score_name, description, now, score_id))
+        if updated == 0:
+            return _json_response({"message": "Score not found."}, 404)
+
+        return _json_response({"score_id": score_id, "score_name": score_name, "description": description})
+    except Exception as e:
+        logging.exception("updateScoreDefinition error")
+        return _json_response({"message": str(e)}, 500)
+
+
+# ===== POST /api/deleteScoreDefinition =====
+
+@app.route(route="deleteScoreDefinition", methods=["POST"])
+def delete_score_definition(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("deleteScoreDefinition called")
+
+    payload = _parse_json_body(req)
+    if payload is None:
+        return _json_response({"message": "Invalid JSON"}, 400)
+
+    score_id = payload.get("score_id")
+    if not score_id:
+        return _json_response({"message": "score_id is required."}, 400)
+
+    now = datetime.now(tz=timezone.utc)
+
+    try:
+        sql = """
+            UPDATE score_definitions
+               SET is_active = 0,
+                   updated_at = ?
+             WHERE score_id = ?;
+        """
+        updated = execute_non_query(sql, (now, score_id))
+        if updated == 0:
+            return _json_response({"message": "Score not found."}, 404)
+
+        return _json_response({"score_id": score_id, "status": "deleted"})
+    except Exception as e:
+        logging.exception("deleteScoreDefinition error")
+        return _json_response({"message": str(e)}, 500)
 
 # ===== GET /api/getAccountTags =====
 
