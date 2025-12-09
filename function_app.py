@@ -734,6 +734,7 @@ def get_account_tags(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
         )
 
+
 # ===== GET /api/getAccountScores =====
 
 @app.route(route="getAccountScores", methods=["GET"])
@@ -770,14 +771,14 @@ def get_account_scores(req: func.HttpRequest) -> func.HttpResponse:
               sd.score_name,
               ascore.score_value,
               ascore.confidence_score,
-              ascore.evaluated_at,
+              ascore.created_at AS evaluated_at,
               ascore.account_id,
               ascore.score_id
             FROM account_scores AS ascore
             LEFT JOIN score_definitions AS sd ON ascore.score_id = sd.score_id
             LEFT JOIN account AS a ON ascore.account_id = a.[企業ID]
             {where_clause}
-            ORDER BY ascore.evaluated_at DESC;
+            ORDER BY ascore.created_at DESC;
         """
 
         rows = query_all(sql, tuple(params))
@@ -805,6 +806,7 @@ def get_account_scores(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500,
         )
+
 
 # ===== POST /api/generateTagCandidates =====
 
