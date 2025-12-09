@@ -3,5 +3,5 @@
 # azure-monitor-opentelemetry
 
 azure-functions
-pyodbc
+pypyodbc
 requests
