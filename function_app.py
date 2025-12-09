@@ -48,6 +48,25 @@ def execute_non_query(sql: str, params: tuple = ()) -> int:
         return cursor.rowcount
 
 
+def _next_numeric_code(table: str, column: str, default_start: int = 1) -> str:
+    """
+    Return next numeric code (as string) by incrementing MAX(column) after casting to INT.
+    If no numeric rows, start from default_start.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT MAX(TRY_CAST({column} AS INT)) AS max_code FROM {table};"
+        )
+        row = cursor.fetchone()
+        current = row[0] if row else None
+    try:
+        next_num = int(current) + 1 if current is not None else default_start
+    except Exception:
+        next_num = default_start
+    return str(next_num)
+
+
 def _clamp_limit(value, default: int = 200, max_limit: int = 2000) -> int:
     try:
         num = int(value)
@@ -391,6 +410,10 @@ def create_tag_definition(req: func.HttpRequest) -> func.HttpResponse:
     is_multi_valued = 1 if payload.get("is_multi_valued") else 0
 
     tag_id = payload.get("tag_id") or str(uuid4())
+    if payload.get("tag_code"):
+        tag_code = payload["tag_code"].strip()
+    else:
+        tag_code = _next_numeric_code("tag_definitions", "tag_code")
     now = datetime.now(tz=timezone.utc)
 
     try:
@@ -524,6 +547,10 @@ def create_score_definition(req: func.HttpRequest) -> func.HttpResponse:
     refresh_interval = payload.get("refresh_interval")
 
     score_id = payload.get("score_id") or str(uuid4())
+    if payload.get("score_code"):
+        score_code = payload["score_code"].strip()
+    else:
+        score_code = _next_numeric_code("score_definitions", "score_code")
     now = datetime.now(tz=timezone.utc)
 
     try:
@@ -644,7 +671,9 @@ def get_account_tags(req: func.HttpRequest) -> func.HttpResponse:
     try:
         limit = _clamp_limit(req.params.get("limit", 200))
         account_id = req.params.get("account_id")
+        account_name = req.params.get("account_name")
         tag_id = req.params.get("tag_id")
+        tag_name = req.params.get("tag_name")
 
         where_parts = []
         params = []
@@ -654,6 +683,12 @@ def get_account_tags(req: func.HttpRequest) -> func.HttpResponse:
         if tag_id:
             where_parts.append("at.tag_id = ?")
             params.append(tag_id)
+        if account_name:
+            where_parts.append("a.[企業名] LIKE ?")
+            params.append(f"%{account_name}%")
+        if tag_name:
+            where_parts.append("td.tag_name LIKE ?")
+            params.append(f"%{tag_name}%")
 
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
@@ -664,11 +699,11 @@ def get_account_tags(req: func.HttpRequest) -> func.HttpResponse:
               at.tag_value,
               at.confidence_score,
               at.created_at,
-              a.企業名 AS account_name,
+              a.[企業名] AS account_name,
               td.tag_name
             FROM account_tags AS at
             LEFT JOIN tag_definitions AS td ON at.tag_id = td.tag_id
-            LEFT JOIN account AS a ON at.account_id = a.企業ID
+            LEFT JOIN account AS a ON at.account_id = a.[企業ID]
             {where_clause}
             ORDER BY at.created_at DESC;
         """
@@ -706,11 +741,58 @@ def get_account_scores(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("getAccountScores called")
 
     try:
-        payload = _fetch_table_rows(
-            "account_scores",
-            req,
-            filterable={"account_id": "account_id", "score_id": "score_id"},
-        )
+        limit = _clamp_limit(req.params.get("limit", 200))
+        account_id = req.params.get("account_id")
+        account_name = req.params.get("account_name")
+        score_id = req.params.get("score_id")
+        score_name = req.params.get("score_name")
+
+        where_parts = []
+        params = []
+        if account_id:
+            where_parts.append("ascore.account_id = ?")
+            params.append(account_id)
+        if score_id:
+            where_parts.append("ascore.score_id = ?")
+            params.append(score_id)
+        if account_name:
+            where_parts.append("a.[企業名] LIKE ?")
+            params.append(f"%{account_name}%")
+        if score_name:
+            where_parts.append("sd.score_name LIKE ?")
+            params.append(f"%{score_name}%")
+
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        sql = f"""
+            SELECT TOP ({limit})
+              a.[企業名] AS account_name,
+              sd.score_name,
+              ascore.score_value,
+              ascore.confidence_score,
+              ascore.evaluated_at,
+              ascore.account_id,
+              ascore.score_id
+            FROM account_scores AS ascore
+            LEFT JOIN score_definitions AS sd ON ascore.score_id = sd.score_id
+            LEFT JOIN account AS a ON ascore.account_id = a.[企業ID]
+            {where_clause}
+            ORDER BY ascore.evaluated_at DESC;
+        """
+
+        rows = query_all(sql, tuple(params))
+        payload = {
+            "columns": [
+                "account_name",
+                "score_name",
+                "score_value",
+                "confidence_score",
+                "evaluated_at",
+                "account_id",
+                "score_id",
+            ],
+            "rows": rows,
+        }
         return func.HttpResponse(
             body=json.dumps(payload, default=str),
             mimetype="application/json",
